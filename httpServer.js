@@ -26,4 +26,17 @@ module.exports = {
         Server.respond(requestId, code, type, body, headers);
     },
 
+    setRootDoc: function(path) {
+        Server.setRootDoc(path);
+    },
+
+    isRunning: async function () {
+        try {
+            return await Server.isRunning();
+        } catch (e) {
+            return false;
+        }
+    }
+
 }
+export default module.exports;
