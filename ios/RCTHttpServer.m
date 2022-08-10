@@ -24,7 +24,6 @@ static RCTBridge *bridge;
 
 RCT_EXPORT_MODULE();
 
-
 - (void)initResponseReceivedFor:(GCDWebServer *)server forType:(NSString*)type {
     [server addDefaultHandlerForMethod:type
                           requestClass:[GCDWebServerDataRequest class]
@@ -37,19 +36,7 @@ RCT_EXPORT_MODULE();
 
         
         if (filePath != nil && [[NSFileManager defaultManager] isReadableFileAtPath:filePath]) {
-            @try {
-                GCDWebServerResponse* requestResponse = nil;
-                if ([request hasByteRange]) {
-                    requestResponse = [GCDWebServerFileResponse responseWithFile:filePath byteRange:request.byteRange];
-                    [requestResponse setValue:@"bytes" forAdditionalHeader:@"Accept-Ranges"];
-                } else {
-                    requestResponse = [GCDWebServerFileResponse responseWithFile:filePath];
-                }
-                requestResponse.cacheControlMaxAge = 3600;
-                completionBlock(requestResponse);
-            } @catch (NSException *exception) {
-                NSLog(@"RCTHttpServer response id: %@, error: %@", requestId, exception);
-            }
+            completionBlock([self composeRespondWithFile:filePath maxAge:3600 byteRange:request.byteRange]);
         } else {
             @synchronized (self) {
                 [self->_completionBlocks setObject:completionBlock forKey:requestId];
@@ -154,25 +141,78 @@ RCT_EXPORT_METHOD(respond: (NSString *) requestId
     NSData* data = [body dataUsingEncoding:NSUTF8StringEncoding];
     GCDWebServerDataResponse* requestResponse = [[GCDWebServerDataResponse alloc] initWithData:data contentType:type];
     requestResponse.statusCode = code;
-    if (headers != NULL && [headers count]){
+    [self completionRespondBlock:requestId requestResponse:requestResponse headers:headers];
+}
+
+RCT_EXPORT_METHOD(respondWithFile: (NSString *) requestId
+                  filePath: (NSString *) filePath
+                  range: (NSDictionary *) range
+                  maxAge: (NSInteger) maxAge
+                  headers: (NSDictionary *) headers)
+{
+    [self completionRespondBlock:requestId 
+          requestResponse:[self composeRespondWithFile:filePath maxAge:maxAge range:range] 
+          headers:headers];
+}
+
+-(void)completionRespondBlock:(NSString *)requestId 
+                        requestResponse:(GCDWebServerResponse*)requestResponse 
+                        headers:(NSDictionary*)headers
+{
+    if (headers != NULL && [headers count]) {
         for(NSString* key in [headers allKeys]) {
             [requestResponse setValue:(NSString *)[headers objectForKey:key] forAdditionalHeader:key];
         }
     }
 
     GCDWebServerCompletionBlock completionBlock = [self getCompletionBlock:requestId];
-
     @try {
         if (completionBlock) completionBlock(requestResponse);
         else NSLog(@"RCTHttpServer response id: %@, missing completionBlock!", requestId);
     } @catch (NSException *exception) {
         NSLog(@"RCTHttpServer response id: %@, error: %@", requestId, exception);
     }
-    
-}                 
+}
 
--(void)invalidate
+-(GCDWebServerResponse*)composeRespondWithFile:(NSString*)filePath 
+                        maxAge:(NSInteger)maxAge 
+                        range:(NSDictionary*)range 
 {
+    NSRange byteRange = NSMakeRange(NSUIntegerMax, 0);
+    if (range != NULL) {
+        if (range[@"from"] && (range[@"from"] >= 0) && range[@"to"] && (range[@"to"] >= 0)) {
+            byteRange.location = (long)range[@"from"];
+            byteRange.length = (long)range[@"to"] - (long)range[@"from"] + 1;
+        } else if (range[@"from"] && (range[@"from"] >= 0)) {
+            byteRange.location = (long)range[@"from"];
+            byteRange.length = NSUIntegerMax;
+        } else if (range[@"to"] && (range[@"to"] >= 0)) {
+            byteRange.location = NSUIntegerMax;
+            byteRange.length = (long)range[@"to"];
+        }
+    }
+    return [self composeRespondWithFile:filePath maxAge:maxAge byteRange:byteRange];
+}
+
+-(GCDWebServerResponse*)composeRespondWithFile:(NSString*)filePath 
+                        maxAge:(NSInteger)maxAge 
+                        byteRange:(NSRange)byteRange 
+{
+
+    GCDWebServerResponse* requestResponse = nil;
+    BOOL hasByteRange = GCDWebServerIsValidByteRange(byteRange);
+    if (hasByteRange) {
+        requestResponse = [GCDWebServerFileResponse responseWithFile:filePath byteRange:byteRange];
+        [requestResponse setValue:@"bytes" forAdditionalHeader:@"Accept-Ranges"];
+    } else {
+        requestResponse = [GCDWebServerFileResponse responseWithFile:filePath];
+    }
+    requestResponse.cacheControlMaxAge = maxAge;
+    return requestResponse;
+}
+
+
+-(void)invalidate{
     [self stop];
 }
 

@@ -21,8 +21,20 @@ const httpServer = {
         DeviceEventEmitter.removeAllListeners('httpServerResponseReceived');
     },
 
-    respond: (requestId, code, type, body, headers) => {
+    respond: (requestId, code, type, body, headers=null) => {
         Server.respond(requestId, code, type, body, headers);
+    },
+
+    respondWithFile: (requestId, filePath, range=null, maxAge=3600, headers=null) => {
+        var byteRange = {from:null, to:null}
+        if (range && (typeof range === 'string')) {
+            var match = /(\d*)-(\d*)/.exec(range);
+            if (match) {
+                if (match[1]) byteRange.from = parseInt(match[1]);
+                if (match[2]) byteRange.to = parseInt(match[2]);
+            }
+        }
+        Server.respondWithFile(requestId, filePath, byteRange, maxAge, headers);
     },
 
     setRootDoc: (path) => {

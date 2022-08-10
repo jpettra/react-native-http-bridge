@@ -52,7 +52,7 @@ public class Server extends NanoHTTPD {
             : null;
 
         if (file != null && file.exists()) {
-            return serveFile(uri, session.getHeaders(), file);
+            return serveFile(getMimeTypeForFile(uri), getHeaders(session), file, null, 3600);
         } else {
             WritableMap request;
             try {
@@ -129,6 +129,11 @@ public class Server extends NanoHTTPD {
         responses.put(requestId, response);
     }
 
+    public void respondWithFile(String requestId, String filePath, ReadableMap range, int maxAge, ReadableMap headers) {
+        Response response = serveFile(getMimeTypeForFile(filePath), headers, new File(filePath), range, maxAge);
+        responses.put(requestId, response);
+    }
+
     private ReadableMap getHeaders(IHTTPSession session) {
         WritableMap headers = Arguments.createMap();
         for (Map.Entry<String,String> entry : session.getHeaders().entrySet()) {
@@ -160,9 +165,8 @@ public class Server extends NanoHTTPD {
         reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit(eventName, params);
     }
 
-    private Response serveFile(String uri, Map<String, String> header, File file) {
+    private Response serveFile(String mime, ReadableMap header, File file, ReadableMap byteRange, int maxAge) {
         Response res;
-        String mime = getMimeTypeForFile(uri);
         try {
             // Calculate etag
             String etag = Integer.toHexString((file.getAbsolutePath() +
@@ -171,8 +175,12 @@ public class Server extends NanoHTTPD {
             // Support (simple) skipping:
             long startFrom = 0;
             long endAt = -1;
-            String range = header.get("range");
-            if (range != null) {
+            String range = header.getString("range");
+            if (byteRange != null) {
+                startFrom = Double.valueOf(byteRange.getDouble("from")).longValue();
+                endAt = Double.valueOf(byteRange.getDouble("to")).longValue();
+                range = String.format("bytes=%d-%d", startFrom, endAt);
+            } else if (range != null) {
                 if (range.startsWith("bytes=")) {
                     range = range.substring("bytes=".length());
                     int minus = range.indexOf('-');
@@ -218,13 +226,18 @@ public class Server extends NanoHTTPD {
                     res.addHeader("ETag", etag);
                 }
             } else {
-                if (etag.equals(header.get("if-none-match")))
+                if (etag.equals(header.getString("if-none-match")))
                     res = newFixedLengthResponse(Response.Status.NOT_MODIFIED, mime, "");
                 else {
                     res = newFixedLengthResponse(Response.Status.OK, mime, new FileInputStream(file), file.length());
                     res.addHeader("Content-Length", "" + fileLen);
                     res.addHeader("ETag", etag);
                 }
+            }
+            if (maxAge > 0) {
+                res.addHeader("Cache-Control", String.format("max-age=%d, public", maxAge));
+            } else {
+                res.addHeader("Cache-Control", "no-cache");
             }
         } catch (IOException ioe) {
             res = newFixedLengthResponse(Status.FORBIDDEN, "", "Forbidden: Reading file failed");
